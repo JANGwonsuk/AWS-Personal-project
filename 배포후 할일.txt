@@ -1,0 +1,152 @@
+각 리전 CGW에서 
+sudo vi /etc/sysctl.conf 
+이상한 엔트리 들어간거 삭제
+sudo sysctl -p
+
+터널 연결하기 
+
+sudo vi /etc/ipsec.d/vpnconfig.sh
+
+left subnet : IDC쪽 서브넷
+right subnet : 나머지 서브넷 이떄 서울 (10.0.0.0/13) 싱가폴(10.0.0.0/14)
+
+정적 라우팅 부분 업데이트 
+
+Ping 테스트
+
+
+
+도메인 등록 (서울DNS)
+
+sudo vi /etc/named.conf
+listen-on     any; 추가
+allow query   any; 추가
+forward only;
+forwarders {8.8.8.8;};
+dnssec-enable no;
+dnssec-validation no;
+로 변경
+
+sudo vi /etc/named.rfc1912.zones
+
+zone "idcseoul.internal" IN{
+        type master;
+        file "idcseoul.zone";
+        allow-update { none; };
+};
+zone "awsseoul.internal" IN{
+        type forward;
+        forward only;
+        forwarders { 10.1.3.250; 10.1.4.250; };
+};
+zone "awssingapore.internal" IN{
+       type forward;
+       forward only;
+       forwarders { 10.3.3.250; 10.3.4.250; };
+};
+zone "idcsingapore.internal" IN{
+       type forward;
+       forward only;
+       forwarders { 10.4.1.200; };
+};
+
+에 추가
+
+sudo vi /var/named/idcseoul.zone
+
+$TTL 1D
+@  IN SOA ns.idcseoul.internal. admin.idcseoul.internal. (
+        2019122701      ; serial
+        1D              ; refresh
+        1H              ; retry
+        1W              ; expire
+        3H )            ; minimum
+
+        NS      ns.idcseoul.internal.
+        IN A    10.2.1.200
+ns      IN A    10.2.1.200
+dnssrv  IN A    10.2.1.200
+dbsrv   IN A    10.2.1.100
+
+sudo chown root.named /var/named/idcseoul.zone
+sudo systemctl restart named
+
+
+싱가폴 DNS
+
+sudo vi /etc/named.conf
+listen-on     any; 추가
+allow query   any; 추가
+forward only;
+forwarders {8.8.8.8;};
+dnssec-enable no;
+dnssec-validation no;
+로 변경
+
+sudo vi /etc/named.rfc1912.zones
+
+zone "idcsingapore.internal" IN {
+        type master;
+        file "idcsingapore.zone";
+        allow-update { none; };
+};
+zone "awssingapore.internal" IN{
+        type forward;
+        forward only;
+        forwarders { 10.3.3.250; 10.3.4.250; };
+};
+zone "awsseoul.internal" IN{
+        type forward;
+        forward only;
+        forwarders { 10.1.3.250; 10.1.4.250; };
+          };
+zone "idcseoul.internal" IN{
+        type forward;
+        forward only;
+        forwarders { 10.2.1.200; };
+};
+에 추가
+
+sudo vi /var/named/idcsingapore.zone
+
+$TTL 1D
+@  IN SOA ns.idcsingapore.internal. admin.idcsingapore.internal. (
+        2019122701      ; serial
+        1D              ; refresh
+        1H              ; retry
+        1W              ; expire
+        3H )            ; minimum
+
+        NS      ns.idcsingapore.internal.
+        IN A    10.4.1.200
+ns      IN A    10.4.1.200
+dnssrv  IN A    10.4.1.200
+dbsrv   IN A    10.4.1.100
+
+sudo chown root.named /var/named/idcsingapore.zone
+sudo systemctl restart named
+
+DB코드
+# 복제 설정
+
+[ec2-user@Singapore-IDC-DB ~]$ mysql -uroot -pqwe123 
+Welcome to the MariaDB monitor. Commands end with ; or \g. ... 
+MariaDB [(none)]> change master to 
+-> master_host='10.2.1.100', 
+-> master_user='repl_user', 
+-> master_password='qwe123', 
+-> master_log_file='mysql-bin.000001', 
+-> master_log_pos=245; 
+Query OK, 0 rows affected (0.01 sec)
+MariaDB [(none)]> START SLAVE; 
+Query OK, 0 rows affected (0.00 sec) 
+MariaDB [(none)]> exit
+Bye
+# 복제 설정 확인 (Slave_ID_Running과 Slave_SQL_Running 값이 Yes면 정상)
+[ec2-user@Singapore-IDC-DB ~]$ mysql -uroot -pqwe123 -e "show slave status\G" | grep Slave 
+Slave_IO_State: Waiting for master to send event 
+Slave_IO_Running: Yes 
+Slave_SQL_Running: Yes 
+
+# 복제 설정 확인 싱가포르 슬레이브 DB 연결 확인
+[ec2-user@Seoul-IDC-DB ~]$ mysql -uroot -pqwe123 -e "show processlist\G"
